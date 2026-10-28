@@ -18,6 +18,7 @@ export default function AdminEmployeesPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
   const [selectedEmployee, setSelectedEmployee] = useState(null);
 
   // Add Employee Modal State
@@ -25,6 +26,12 @@ export default function AdminEmployeesPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState("");
   const [createSuccessMsg, setCreateSuccessMsg] = useState("");
+
+  // Archive / Restore modal state
+  const [archiveTarget, setArchiveTarget] = useState(null); // employee to archive
+  const [restoreTarget, setRestoreTarget] = useState(null); // employee to restore
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   const departments = [
     "Engineering",
@@ -36,11 +43,11 @@ export default function AdminEmployeesPage() {
   ];
 
   // Fetch employees from MongoDB Atlas API
-  const fetchEmployees = useCallback(async () => {
+  const fetchEmployees = useCallback(async (status = statusFilter) => {
     try {
       setLoading(true);
       setFetchError("");
-      const res = await fetch("/api/employees");
+      const res = await fetch(`/api/employees?status=${status}`);
       const data = await res.json();
 
       if (data.success) {
@@ -53,11 +60,11 @@ export default function AdminEmployeesPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [statusFilter]);
 
   useEffect(() => {
-    fetchEmployees();
-  }, [fetchEmployees]);
+    fetchEmployees(statusFilter);
+  }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle employee creation submission
   const handleCreateEmployee = async (formData) => {
@@ -80,7 +87,7 @@ export default function AdminEmployeesPage() {
       }
 
       // Success: refresh list from MongoDB, close modal, show success toast
-      await fetchEmployees();
+      await fetchEmployees(statusFilter);
       setCreateLoading(false);
       setIsAddModalOpen(false);
       setCreateSuccessMsg(`Employee ${data.employee?.name || ""} created successfully!`);
@@ -91,6 +98,80 @@ export default function AdminEmployeesPage() {
     } catch (err) {
       setCreateLoading(false);
       setCreateError("An unexpected error occurred while saving the employee.");
+    }
+  };
+
+  // Confirm archive (soft delete)
+  const handleConfirmArchive = async () => {
+  if (!archiveTarget) return;
+
+  try {
+    setActionLoading(true);
+    setActionError("");
+
+    const employeeId =
+      archiveTarget.employeeId ||
+      archiveTarget.id ||
+      archiveTarget._id;
+
+    if (!employeeId) {
+      throw new Error("Employee ID missing. Please refresh and try again.");
+    }
+
+    const res = await fetch(
+      `/api/employees/${encodeURIComponent(employeeId)}`,
+      { method: "DELETE" }
+    );
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      throw new Error(data.message || "Failed to archive employee.");
+    }
+
+    setArchiveTarget(null);
+    setCreateSuccessMsg(
+      data.message || `Employee ${archiveTarget.name} has been archived.`
+    );
+
+    await fetchEmployees(statusFilter);
+
+    setTimeout(() => setCreateSuccessMsg(""), 5000);
+  } catch (err) {
+    setActionError(err.message || "Network error while archiving employee.");
+  } finally {
+    setActionLoading(false);
+  }
+};
+
+  // Confirm restore
+  const handleConfirmRestore = async () => {
+    if (!restoreTarget) return;
+    try {
+      setActionLoading(true);
+      setActionError("");
+
+      const res = await fetch(`/api/employees/${encodeURIComponent(restoreTarget.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "restore" }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setActionError(data.message || "Failed to restore employee.");
+        setActionLoading(false);
+        return;
+      }
+
+      setRestoreTarget(null);
+      setActionLoading(false);
+      setCreateSuccessMsg(`Employee ${restoreTarget.name} has been restored.`);
+      setTimeout(() => setCreateSuccessMsg(""), 5000);
+      await fetchEmployees(statusFilter);
+    } catch (err) {
+      setActionError("Network error while restoring employee.");
+      setActionLoading(false);
     }
   };
 
@@ -107,6 +188,9 @@ export default function AdminEmployeesPage() {
 
     return matchesSearch && matchesDept;
   });
+
+  const activeCount = employees.filter((e) => e.status === "Active").length;
+  const archivedCount = employees.filter((e) => e.status === "Archived").length;
 
   return (
     <DashboardLayout
@@ -141,7 +225,7 @@ export default function AdminEmployeesPage() {
               </svg>
               <span>{fetchError}</span>
             </div>
-            <Button size="sm" variant="outline" onClick={fetchEmployees}>
+            <Button size="sm" variant="outline" onClick={() => fetchEmployees(statusFilter)}>
               Retry
             </Button>
           </div>
@@ -161,17 +245,17 @@ export default function AdminEmployeesPage() {
             <span className="text-xs font-semibold text-slate-500 uppercase">Active Status</span>
             <div className="mt-1 flex items-baseline justify-between">
               <span className="text-2xl font-bold text-emerald-600">
-                {employees.filter((e) => e.status === "Active").length}
+                {activeCount}
               </span>
               <span className="text-xs text-emerald-600">Active</span>
             </div>
           </div>
 
           <div className="bg-white rounded-xl border border-slate-200/80 p-4 shadow-xs">
-            <span className="text-xs font-semibold text-slate-500 uppercase">Database</span>
+            <span className="text-xs font-semibold text-slate-500 uppercase">Archived</span>
             <div className="mt-1 flex items-baseline justify-between">
-              <span className="text-lg font-bold text-indigo-600 font-mono">hrms.users</span>
-              <span className="text-xs text-slate-400">Atlas</span>
+              <span className="text-2xl font-bold text-amber-600">{archivedCount}</span>
+              <span className="text-xs text-slate-400">Inactive</span>
             </div>
           </div>
 
@@ -187,7 +271,7 @@ export default function AdminEmployeesPage() {
         {/* Filter Toolbar & Add Employee Button */}
         <Card>
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Input
                 placeholder="Search by name, ID or title..."
                 value={searchQuery}
@@ -206,6 +290,17 @@ export default function AdminEmployeesPage() {
                 options={[
                   { value: "all", label: "All Departments" },
                   ...departments.map((d) => ({ value: d, label: d })),
+                ]}
+              />
+
+              <Select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                placeholder={null}
+                options={[
+                  { value: "active", label: "Active Only" },
+                  { value: "archived", label: "Archived Only" },
+                  { value: "all", label: "All Employees" },
                 ]}
               />
             </div>
@@ -261,6 +356,14 @@ export default function AdminEmployeesPage() {
           <EmployeeTable
             employees={filteredEmployees}
             onViewEmployee={(emp) => setSelectedEmployee(emp)}
+            onArchiveEmployee={(emp) => {
+              setActionError("");
+              setArchiveTarget(emp);
+            }}
+            onRestoreEmployee={(emp) => {
+              setActionError("");
+              setRestoreTarget(emp);
+            }}
             emptyMessage={
               employees.length === 0
                 ? "No employee records found in MongoDB. Click 'Add Employee' to register the first employee."
@@ -313,8 +416,12 @@ export default function AdminEmployeesPage() {
                   <h4 className="font-bold text-slate-900 text-base truncate">
                     {selectedEmployee.name}
                   </h4>
-                  <Badge variant="success" size="sm" dot>
-                    Active
+                  <Badge
+                    variant={selectedEmployee.status === "Active" ? "success" : "neutral"}
+                    size="sm"
+                    dot
+                  >
+                    {selectedEmployee.status || "Active"}
                   </Badge>
                 </div>
                 <p className="text-xs text-slate-600 font-medium">
@@ -338,39 +445,141 @@ export default function AdminEmployeesPage() {
               </div>
             </div>
 
+            {/* Archived Notice */}
+            {selectedEmployee.status === "Archived" && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                <strong>Archived:</strong> This employee account is inactive. Their data is preserved in the database.
+                {selectedEmployee.deletedAt && (
+                  <span className="block text-amber-600 mt-0.5">
+                    Archived on: {new Date(selectedEmployee.deletedAt).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Leave Balance Quotas */}
-            <div>
-              <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-                Annual Leave Entitlement (15 Days Total)
-              </h5>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg text-center">
-                  <span className="text-[11px] text-indigo-700 font-medium block">Casual Leave</span>
-                  <span className="text-xl font-bold text-indigo-900">
-                    {selectedEmployee.leaveBalance?.casual ?? 5}
-                  </span>
-                  <span className="text-[10px] text-indigo-600 block">/ 5 days</span>
-                </div>
+            {selectedEmployee.status !== "Archived" && (
+              <div>
+                <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                  Annual Leave Entitlement (15 Days Total)
+                </h5>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg text-center">
+                    <span className="text-[11px] text-indigo-700 font-medium block">Casual Leave</span>
+                    <span className="text-xl font-bold text-indigo-900">
+                      {selectedEmployee.leaveBalance?.casual ?? 5}
+                    </span>
+                    <span className="text-[10px] text-indigo-600 block">/ 5 days</span>
+                  </div>
 
-                <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-lg text-center">
-                  <span className="text-[11px] text-amber-700 font-medium block">Sick Leave</span>
-                  <span className="text-xl font-bold text-amber-900">
-                    {selectedEmployee.leaveBalance?.sick ?? 5}
-                  </span>
-                  <span className="text-[10px] text-amber-600 block">/ 5 days</span>
-                </div>
+                  <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-lg text-center">
+                    <span className="text-[11px] text-amber-700 font-medium block">Sick Leave</span>
+                    <span className="text-xl font-bold text-amber-900">
+                      {selectedEmployee.leaveBalance?.sick ?? 5}
+                    </span>
+                    <span className="text-[10px] text-amber-600 block">/ 5 days</span>
+                  </div>
 
-                <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-lg text-center">
-                  <span className="text-[11px] text-emerald-700 font-medium block">Medical Leave</span>
-                  <span className="text-xl font-bold text-emerald-900">
-                    {selectedEmployee.leaveBalance?.medical ?? 5}
-                  </span>
-                  <span className="text-[10px] text-emerald-600 block">/ 5 days</span>
+                  <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-lg text-center">
+                    <span className="text-[11px] text-emerald-700 font-medium block">Medical Leave</span>
+                    <span className="text-xl font-bold text-emerald-900">
+                      {selectedEmployee.leaveBalance?.medical ?? 5}
+                    </span>
+                    <span className="text-[10px] text-emerald-600 block">/ 5 days</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
+      </Modal>
+
+      {/* Archive Confirmation Modal */}
+      <Modal
+        isOpen={!!archiveTarget}
+        onClose={() => {
+          if (!actionLoading) setArchiveTarget(null);
+        }}
+        title="Archive Employee"
+        description={`You are about to archive ${archiveTarget?.name}'s account.`}
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setArchiveTarget(null)}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={handleConfirmArchive}
+              disabled={actionLoading}
+            >
+              {actionLoading ? "Archiving..." : "Confirm Archive"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm text-slate-700">
+          <p>
+            Archiving <strong>{archiveTarget?.name}</strong> ({archiveTarget?.id}) will:
+          </p>
+          <ul className="list-disc list-inside space-y-1 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg">
+            <li>Mark the account as inactive — they cannot log in</li>
+            <li>Preserve <strong>all</strong> their data in MongoDB (nothing is deleted)</li>
+            <li>They can be restored at any time by an administrator</li>
+          </ul>
+          {actionError && (
+            <p className="text-xs text-rose-600 font-medium bg-rose-50 p-2 rounded-lg border border-rose-200">
+              {actionError}
+            </p>
+          )}
+        </div>
+      </Modal>
+
+      {/* Restore Confirmation Modal */}
+      <Modal
+        isOpen={!!restoreTarget}
+        onClose={() => {
+          if (!actionLoading) setRestoreTarget(null);
+        }}
+        title="Restore Employee"
+        description={`You are about to reactivate ${restoreTarget?.name}'s account.`}
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setRestoreTarget(null)}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="success"
+              onClick={handleConfirmRestore}
+              disabled={actionLoading}
+            >
+              {actionLoading ? "Restoring..." : "Confirm Restore"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm text-slate-700">
+          <p>
+            Restoring <strong>{restoreTarget?.name}</strong> ({restoreTarget?.id}) will:
+          </p>
+          <ul className="list-disc list-inside space-y-1 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg">
+            <li>Mark the account as active again</li>
+            <li>Allow them to log in with their original credentials</li>
+            <li>All leave history and balances remain intact</li>
+          </ul>
+          {actionError && (
+            <p className="text-xs text-rose-600 font-medium bg-rose-50 p-2 rounded-lg border border-rose-200">
+              {actionError}
+            </p>
+          )}
+        </div>
       </Modal>
     </DashboardLayout>
   );

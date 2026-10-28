@@ -1,16 +1,50 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import bcrypt from "bcryptjs";
 import connectDB from "@/lib/mongodb";
 import User from "@/models/User";
+import ArchivedUser from "@/models/ArchivedUser";
 import { authOptions } from "@/lib/auth";
 
-// GET /api/employees - List all employees (Admin only)
-export async function GET() {
+function formatEmployee(emp, archived = false) {
+  const casual = emp.leaveBalance?.casual || { allocated: 5, used: 0 };
+  const sick = emp.leaveBalance?.sick || { allocated: 5, used: 0 };
+  const medical = emp.leaveBalance?.medical || { allocated: 5, used: 0 };
+
+  return {
+    id: emp.employeeId,
+    _id: emp._id.toString(),
+    name: emp.name,
+    email: emp.email,
+    department: emp.department || "Unassigned",
+    designation: emp.designation || "Employee",
+    phone: emp.phone || "",
+    joiningDate:
+      emp.joiningDate ||
+      (emp.createdAt ? new Date(emp.createdAt).toISOString().split("T")[0] : ""),
+    status: archived ? "Archived" : "Active",
+    isActive: !archived,
+    deletedAt: emp.deletedAt || null,
+    role: emp.role,
+    leaveBalance: {
+      casual: casual.allocated - casual.used,
+      sick: sick.allocated - sick.used,
+      medical: medical.allocated - medical.used,
+      totalRemaining:
+        casual.allocated - casual.used +
+        sick.allocated - sick.used +
+        medical.allocated - medical.used,
+      raw: emp.leaveBalance,
+    },
+  };
+}
+
+// GET /api/employees?status=active|archived|all
+export async function GET(request) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || !session.user) {
+    if (!session?.user) {
       return NextResponse.json(
         { success: false, message: "Unauthorized: Please sign in" },
         { status: 401 }
@@ -26,43 +60,66 @@ export async function GET() {
 
     await connectDB();
 
-    const employees = await User.find({ role: "employee" })
-      .select("-passwordHash")
-      .sort({ createdAt: -1 })
-      .lean();
+    const { searchParams } = new URL(request.url);
+    const status = searchParams.get("status") || "active";
 
-    // Map documents to safe frontend format
-    const formattedEmployees = employees.map((emp) => ({
-      id: emp.employeeId,
-      _id: emp._id.toString(),
-      name: emp.name,
-      email: emp.email,
-      department: emp.department || "Unassigned",
-      designation: emp.designation || "Employee",
-      phone: emp.phone || "",
-      joiningDate: emp.joiningDate || new Date(emp.createdAt).toISOString().split("T")[0],
-      status: "Active",
-      role: emp.role,
-      leaveBalance: {
-        casual: emp.leaveBalance?.casual?.allocated - emp.leaveBalance?.casual?.used,
-        sick: emp.leaveBalance?.sick?.allocated - emp.leaveBalance?.sick?.used,
-        medical: emp.leaveBalance?.medical?.allocated - emp.leaveBalance?.medical?.used,
-        totalRemaining:
-          (emp.leaveBalance?.casual?.allocated - emp.leaveBalance?.casual?.used) +
-          (emp.leaveBalance?.sick?.allocated - emp.leaveBalance?.sick?.used) +
-          (emp.leaveBalance?.medical?.allocated - emp.leaveBalance?.medical?.used),
-        raw: emp.leaveBalance,
-      },
-    }));
+    if (!["active", "archived", "all"].includes(status)) {
+      return NextResponse.json(
+        { success: false, message: "Invalid status filter" },
+        { status: 400 }
+      );
+    }
+
+    const activeQuery = User.find({
+      role: "employee",
+      isActive: { $ne: false },
+    }).select("-passwordHash").lean();
+
+    // Legacy archived employees are still in users with isActive:false.
+    const legacyArchivedQuery = User.find({
+      role: "employee",
+      isActive: false,
+    }).select("-passwordHash").lean();
+
+    const archivedQuery = ArchivedUser.find({
+      role: "employee",
+    }).select("-passwordHash").lean();
+
+    const [activeDocs, legacyArchivedDocs, archivedDocs] = await Promise.all([
+      activeQuery,
+      legacyArchivedQuery,
+      archivedQuery,
+    ]);
+
+    const activeEmployees = activeDocs.map((emp) => formatEmployee(emp, false));
+    const legacyArchived = legacyArchivedDocs.map((emp) => formatEmployee(emp, true));
+    const archivedEmployees = archivedDocs.map((emp) => formatEmployee(emp, true));
+
+    // Prefer archivedUsers when a record exists in both collections.
+    const archivedIds = new Set(
+      archivedEmployees.map((emp) => String(emp.id).toLowerCase())
+    );
+    const legacyOnly = legacyArchived.filter(
+      (emp) => !archivedIds.has(String(emp.id).toLowerCase())
+    );
+    const allArchived = [...archivedEmployees, ...legacyOnly];
+
+    let employees;
+    if (status === "active") employees = activeEmployees;
+    else if (status === "archived") employees = allArchived;
+    else employees = [...activeEmployees, ...allArchived];
+
+    employees.sort((a, b) => String(b.joiningDate).localeCompare(String(a.joiningDate)));
 
     return NextResponse.json({
       success: true,
-      count: formattedEmployees.length,
-      employees: formattedEmployees,
+      count: employees.length,
+      activeCount: activeEmployees.length,
+      archivedCount: allArchived.length,
+      employees,
     });
   } catch (error) {
-    console.error("Fetch employees failed:", error.message);
-
+    console.error("Fetch employees failed:", error);
     return NextResponse.json(
       { success: false, message: "Could not fetch employees" },
       { status: 500 }
@@ -75,7 +132,7 @@ export async function POST(request) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || !session.user) {
+    if (!session?.user) {
       return NextResponse.json(
         { success: false, message: "Unauthorized: Please sign in" },
         { status: 401 }
@@ -101,7 +158,6 @@ export async function POST(request) {
       password,
     } = body;
 
-    // Validate required fields
     if (
       typeof name !== "string" ||
       !name.trim() ||
@@ -111,17 +167,15 @@ export async function POST(request) {
       !employeeId.trim()
     ) {
       return NextResponse.json(
-        {
-          success: false,
-          message: "Name, email, and employee ID are required.",
-        },
+        { success: false, message: "Name, email, and employee ID are required." },
         { status: 400 }
       );
     }
 
-    // Email format validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmployeeId = employeeId.trim();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       return NextResponse.json(
         { success: false, message: "Please provide a valid email address." },
         { status: 400 }
@@ -130,31 +184,33 @@ export async function POST(request) {
 
     await connectDB();
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const normalizedEmployeeId = employeeId.trim();
-
-    // Check for duplicate email or employeeId
-    const existing = await User.findOne({
+    const duplicateFilter = {
       $or: [
         { email: normalizedEmail },
         { employeeId: normalizedEmployeeId },
       ],
-    });
+    };
 
-    if (existing) {
+    const [existingUser, existingArchived] = await Promise.all([
+      User.findOne(duplicateFilter),
+      ArchivedUser.findOne(duplicateFilter),
+    ]);
+
+    if (existingUser || existingArchived) {
+      const existing = existingUser || existingArchived;
       const isEmailDuplicate = existing.email === normalizedEmail;
+
       return NextResponse.json(
         {
           success: false,
           message: isEmailDuplicate
-            ? `An employee with email "${normalizedEmail}" already exists.`
-            : `An employee with ID "${normalizedEmployeeId}" already exists.`,
+            ? `An employee with email "${normalizedEmail}" already exists, including archived records.`
+            : `An employee with ID "${normalizedEmployeeId}" already exists, including archived records.`,
         },
         { status: 409 }
       );
     }
 
-    // Determine initial password (provided or generated)
     const rawPassword =
       typeof password === "string" && password.trim().length >= 6
         ? password.trim()
@@ -162,14 +218,12 @@ export async function POST(request) {
 
     const passwordHash = await bcrypt.hash(rawPassword, 12);
 
-    // Initial leave balances: Casual: 5, Sick: 5, Medical: 5 (allocated: 5, used: 0)
     const initialLeaveBalance = {
       casual: { allocated: 5, used: 0 },
       sick: { allocated: 5, used: 0 },
       medical: { allocated: 5, used: 0 },
     };
 
-    // Always enforce role: "employee"
     const newEmployee = await User.create({
       name: name.trim(),
       email: normalizedEmail,
@@ -181,9 +235,10 @@ export async function POST(request) {
       role: "employee",
       passwordHash,
       leaveBalance: initialLeaveBalance,
+      isActive: true,
+      deletedAt: null,
     });
 
-    // Return safe representation without passwordHash
     return NextResponse.json(
       {
         success: true,
@@ -212,14 +267,13 @@ export async function POST(request) {
       { status: 201 }
     );
   } catch (error) {
+    console.error("Create employee failed:", error);
     if (error.code === 11000) {
       return NextResponse.json(
         { success: false, message: "Email or employee ID already exists" },
         { status: 409 }
       );
     }
-
-    console.error("Create employee failed:", error.message);
 
     return NextResponse.json(
       { success: false, message: "Could not create employee" },

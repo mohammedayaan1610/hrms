@@ -287,7 +287,7 @@ export default function AdminDashboardPage() {
             </div>
           </Card>
 
-          {/* Employee Overview Summary */}
+          {/* Employee Overview Summary — dynamic from MongoDB */}
           <Card
             header={
               <div className="flex items-center justify-between w-full">
@@ -303,64 +303,60 @@ export default function AdminDashboardPage() {
               </div>
             }
           >
-            <div className="space-y-4">
-              <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between text-xs font-medium text-slate-600 mb-1">
-                    <span>Engineering</span>
-                    <span className="text-slate-900 font-semibold">3 employees (43%)</span>
+            {(() => {
+              const deptColors = [
+                "bg-indigo-600",
+                "bg-emerald-500",
+                "bg-amber-500",
+                "bg-purple-500",
+                "bg-rose-500",
+                "bg-sky-500",
+              ];
+              const activeEmps = employees.filter((e) => e.status === "Active");
+              const deptMap = {};
+              for (const emp of activeEmps) {
+                const d = emp.department || "Unassigned";
+                deptMap[d] = (deptMap[d] || 0) + 1;
+              }
+              const deptList = Object.entries(deptMap).sort((a, b) => b[1] - a[1]);
+              const total = activeEmps.length || 1;
+              if (deptList.length === 0) {
+                return (
+                  <p className="text-xs text-slate-400 text-center py-4">
+                    No active employees to display.
+                  </p>
+                );
+              }
+              return (
+                <div className="space-y-4">
+                  <div className="space-y-3">
+                    {deptList.map(([dept, count], idx) => {
+                      const pct = Math.round((count / total) * 100);
+                      return (
+                        <div key={dept}>
+                          <div className="flex justify-between text-xs font-medium text-slate-600 mb-1">
+                            <span>{dept}</span>
+                            <span className="text-slate-900 font-semibold">
+                              {count} {count === 1 ? "employee" : "employees"} ({pct}%)
+                            </span>
+                          </div>
+                          <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className={`${deptColors[idx % deptColors.length]} h-full rounded-full transition-all duration-500`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="bg-indigo-600 h-full rounded-full" style={{ width: "43%" }} />
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                    <span>{deptList.length} department{deptList.length !== 1 ? "s" : ""} represented</span>
+                    <span className="font-semibold text-slate-700">{activeEmps.length} active</span>
                   </div>
                 </div>
-
-                <div>
-                  <div className="flex justify-between text-xs font-medium text-slate-600 mb-1">
-                    <span>Finance</span>
-                    <span className="text-slate-900 font-semibold">1 employee (14%)</span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="bg-emerald-500 h-full rounded-full" style={{ width: "14%" }} />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-xs font-medium text-slate-600 mb-1">
-                    <span>Product Design</span>
-                    <span className="text-slate-900 font-semibold">1 employee (14%)</span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="bg-amber-500 h-full rounded-full" style={{ width: "14%" }} />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-xs font-medium text-slate-600 mb-1">
-                    <span>Human Resources</span>
-                    <span className="text-slate-900 font-semibold">1 employee (14%)</span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="bg-purple-500 h-full rounded-full" style={{ width: "14%" }} />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-xs font-medium text-slate-600 mb-1">
-                    <span>Marketing</span>
-                    <span className="text-slate-900 font-semibold">1 employee (14%)</span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="bg-rose-500 h-full rounded-full" style={{ width: "14%" }} />
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                <span>Total headcount quota: 15 seats</span>
-                <span className="font-semibold text-slate-700">8 available</span>
-              </div>
-            </div>
+              );
+            })()}
           </Card>
         </div>
       </div>

@@ -34,6 +34,20 @@ export async function GET() {
       );
     }
 
+    const user = await User.findOne({
+      $or: [
+        { email: session.user.email },
+        { employeeId },
+      ],
+    }).select("isActive");
+
+    if (user && user.isActive === false) {
+      return NextResponse.json(
+        { success: false, message: "Forbidden: Account is inactive" },
+        { status: 403 }
+      );
+    }
+
     const cleanId = (employeeId || "").replace("-", "");
     const requests = await LeaveRequest.find({
       $or: [
@@ -106,6 +120,13 @@ export async function POST(request) {
       return NextResponse.json(
         { success: false, message: "Employee record not found" },
         { status: 404 }
+      );
+    }
+
+    if (user.isActive === false) {
+      return NextResponse.json(
+        { success: false, message: "Forbidden: Account is inactive" },
+        { status: 403 }
       );
     }
 

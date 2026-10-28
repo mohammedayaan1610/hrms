@@ -43,6 +43,13 @@ export async function PATCH(request) {
       );
     }
 
+    if (user.isActive === false) {
+      return NextResponse.json(
+        { success: false, message: "Forbidden: Account is inactive" },
+        { status: 403 }
+      );
+    }
+
     // Only allow updating permitted personal fields
     if (typeof phone === "string") {
       user.phone = phone.trim();

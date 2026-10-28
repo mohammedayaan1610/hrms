@@ -41,6 +41,13 @@ export async function GET() {
       );
     }
 
+    if (user.isActive === false) {
+      return NextResponse.json(
+        { success: false, message: "Forbidden: Account is inactive" },
+        { status: 403 }
+      );
+    }
+
     // Fetch leave requests for this authenticated employee only
     const cleanId = (user.employeeId || "").replace("-", "");
     const userRequests = await LeaveRequest.find({

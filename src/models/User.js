@@ -66,6 +66,15 @@ const UserSchema = new mongoose.Schema(
         used: { type: Number, default: 0 },
       },
     },
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );

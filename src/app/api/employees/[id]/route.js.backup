@@ -1,0 +1,213 @@
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import connectDB from "@/lib/mongodb";
+import User from "@/models/User";
+import { authOptions } from "@/lib/auth";
+
+// DELETE /api/employees/[id] - Soft delete an employee (Admin only)
+// NEVER uses deleteOne, findByIdAndDelete, or deleteMany.
+export async function DELETE(request, context) {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session || !session.user) {
+      return NextResponse.json(
+        { success: false, message: "Unauthorized: Please sign in" },
+        { status: 401 }
+      );
+    }
+
+    if (session.user.role !== "admin") {
+      return NextResponse.json(
+        { success: false, message: "Forbidden: Admin access required" },
+        { status: 403 }
+      );
+    }
+
+    const { id } = await context.params;
+    if (!id || typeof id !== "string") {
+      return NextResponse.json(
+        { success: false, message: "Invalid employee ID specified" },
+        { status: 400 }
+      );
+    }
+
+    await connectDB();
+
+    const cleanId = id.trim();
+    const cleanIdNoHyphen = cleanId.replace("-", "");
+
+    // Find the target user by employeeId or ObjectId
+    const user = await User.findOne({
+      $or: [
+        { employeeId: cleanId },
+        { employeeId: cleanIdNoHyphen },
+        { _id: cleanId.match(/^[0-9a-fA-F]{24}$/) ? cleanId : null },
+      ].filter(Boolean),
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, message: "Employee record not found" },
+        { status: 404 }
+      );
+    }
+
+    // Protection 1: Do not allow deleting the currently logged-in admin
+    const currentAdminEmpId = session.user.employeeId;
+    const currentAdminEmail = session.user.email?.toLowerCase();
+
+    if (
+      (currentAdminEmpId && (user.employeeId === currentAdminEmpId || user.employeeId.replace("-", "") === currentAdminEmpId.replace("-", ""))) ||
+      (currentAdminEmail && user.email?.toLowerCase() === currentAdminEmail)
+    ) {
+      return NextResponse.json(
+        { success: false, message: "You cannot delete or archive your own logged-in admin account." },
+        { status: 400 }
+      );
+    }
+
+    // Protection 2: If the target is an admin, check that it's not the last active admin
+    if (user.role === "admin") {
+      const activeAdminCount = await User.countDocuments({
+        role: "admin",
+        isActive: { $ne: false },
+      });
+
+      if (activeAdminCount <= 1) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: "Cannot archive this admin account because it is the last active admin in the system.",
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Protection 3: Check if already inactive
+    if (user.isActive === false) {
+      return NextResponse.json(
+        { success: false, message: "Employee is already archived/inactive" },
+        { status: 400 }
+      );
+    }
+
+    // Soft delete: update isActive to false, set deletedAt timestamp.
+    // ALL original data, employeeId, leaveBalance, and history are preserved.
+    user.isActive = false;
+    user.deletedAt = new Date();
+    await user.save();
+
+    return NextResponse.json({
+      success: true,
+      message: `Employee ${user.name} (${user.employeeId}) has been archived successfully.`,
+      employee: {
+        id: user.employeeId,
+        _id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        isActive: false,
+        deletedAt: user.deletedAt,
+        status: "Archived",
+      },
+    });
+  } catch (error) {
+    console.error("Soft delete employee error:", error.message);
+    return NextResponse.json(
+      { success: false, message: "Could not archive employee" },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH /api/employees/[id] - Restore an archived employee (Admin only)
+export async function PATCH(request, context) {
+  try {
+    const session = await getServerSession(authOptions);
+
+    if (!session || !session.user) {
+      return NextResponse.json(
+        { success: false, message: "Unauthorized: Please sign in" },
+        { status: 401 }
+      );
+    }
+
+    if (session.user.role !== "admin") {
+      return NextResponse.json(
+        { success: false, message: "Forbidden: Admin access required" },
+        { status: 403 }
+      );
+    }
+
+    const { id } = await context.params;
+    if (!id || typeof id !== "string") {
+      return NextResponse.json(
+        { success: false, message: "Invalid employee ID specified" },
+        { status: 400 }
+      );
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const action = body.action || "restore";
+
+    if (action !== "restore") {
+      return NextResponse.json(
+        { success: false, message: "Unsupported action. Use action: 'restore'." },
+        { status: 400 }
+      );
+    }
+
+    await connectDB();
+
+    const cleanId = id.trim();
+    const cleanIdNoHyphen = cleanId.replace("-", "");
+
+    const user = await User.findOne({
+      $or: [
+        { employeeId: cleanId },
+        { employeeId: cleanIdNoHyphen },
+        { _id: cleanId.match(/^[0-9a-fA-F]{24}$/) ? cleanId : null },
+      ].filter(Boolean),
+    });
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, message: "Employee record not found" },
+        { status: 404 }
+      );
+    }
+
+    if (user.isActive !== false) {
+      return NextResponse.json(
+        { success: false, message: "Employee is already active" },
+        { status: 400 }
+      );
+    }
+
+    // Reactivate the original record - NO duplicate creation
+    user.isActive = true;
+    user.deletedAt = null;
+    await user.save();
+
+    return NextResponse.json({
+      success: true,
+      message: `Employee ${user.name} (${user.employeeId}) has been restored successfully.`,
+      employee: {
+        id: user.employeeId,
+        _id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        isActive: true,
+        deletedAt: null,
+        status: "Active",
+      },
+    });
+  } catch (error) {
+    console.error("Restore employee error:", error.message);
+    return NextResponse.json(
+      { success: false, message: "Could not restore employee" },
+      { status: 500 }
+    );
+  }
+}

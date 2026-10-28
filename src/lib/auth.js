@@ -32,6 +32,10 @@ export const authOptions = {
           throw new Error("Invalid email or password");
         }
 
+        if (user.isActive === false) {
+          throw new Error("Account has been deactivated. Please contact your HR administrator.");
+        }
+
         const isPasswordValid = await bcrypt.compare(
           credentials.password,
           user.passwordHash

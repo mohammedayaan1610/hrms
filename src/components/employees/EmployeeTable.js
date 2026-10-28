@@ -6,6 +6,8 @@ import EmptyState from "@/components/ui/EmptyState";
 export default function EmployeeTable({
   employees = [],
   onViewEmployee = null,
+  onArchiveEmployee = null,
+  onRestoreEmployee = null,
   emptyMessage = "No employees found matching the criteria.",
 }) {
   if (!employees || employees.length === 0) {
@@ -62,15 +64,21 @@ export default function EmployeeTable({
                 {emp.designation}
               </td>
               <td className="px-5 py-4 whitespace-nowrap">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-900 text-sm">
-                    {emp.leaveBalance?.totalRemaining ?? 15}
-                  </span>
-                  <span className="text-xs text-slate-400">/ 15 days</span>
-                </div>
-                <span className="text-[11px] text-slate-400 block">
-                  C:{emp.leaveBalance?.casual ?? 5} S:{emp.leaveBalance?.sick ?? 5} M:{emp.leaveBalance?.medical ?? 5}
-                </span>
+                {emp.isActive === false ? (
+                  <span className="text-xs text-slate-400 italic">Archived</span>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-900 text-sm">
+                        {emp.leaveBalance?.totalRemaining ?? 15}
+                      </span>
+                      <span className="text-xs text-slate-400">/ 15 days</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 block">
+                      C:{emp.leaveBalance?.casual ?? 5} S:{emp.leaveBalance?.sick ?? 5} M:{emp.leaveBalance?.medical ?? 5}
+                    </span>
+                  </>
+                )}
               </td>
               <td className="px-5 py-4 whitespace-nowrap">
                 <Badge
@@ -82,15 +90,35 @@ export default function EmployeeTable({
                 </Badge>
               </td>
               <td className="px-5 py-4 whitespace-nowrap">
-                {onViewEmployee && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onViewEmployee(emp)}
-                  >
-                    View Details
-                  </Button>
-                )}
+                <div className="flex items-center gap-1.5">
+                  {onViewEmployee && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onViewEmployee(emp)}
+                    >
+                      View
+                    </Button>
+                  )}
+                  {emp.status === "Active" && onArchiveEmployee && (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => onArchiveEmployee(emp)}
+                    >
+                      Archive
+                    </Button>
+                  )}
+                  {emp.status === "Archived" && onRestoreEmployee && (
+                    <Button
+                      size="sm"
+                      variant="success"
+                      onClick={() => onRestoreEmployee(emp)}
+                    >
+                      Restore
+                    </Button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
@@ -138,24 +166,45 @@ export default function EmployeeTable({
               </div>
               <div>
                 <span className="text-slate-400 block">Leave Balance</span>
-                <span className="font-semibold text-slate-900">
-                  {emp.leaveBalance?.totalRemaining ?? 15} / 15 days
-                </span>
+                {emp.isActive === false ? (
+                  <span className="text-slate-400 italic text-xs">Archived</span>
+                ) : (
+                  <span className="font-semibold text-slate-900">
+                    {emp.leaveBalance?.totalRemaining ?? 15} / 15 days
+                  </span>
+                )}
               </div>
             </div>
 
-            {onViewEmployee && (
-              <div className="pt-2 border-t border-slate-100 flex justify-end">
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+              {onViewEmployee && (
                 <Button
                   size="sm"
                   variant="outline"
-                  className="w-full"
                   onClick={() => onViewEmployee(emp)}
                 >
-                  View Details
+                  View
                 </Button>
-              </div>
-            )}
+              )}
+              {emp.status === "Active" && onArchiveEmployee && (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => onArchiveEmployee(emp)}
+                >
+                  Archive
+                </Button>
+              )}
+              {emp.status === "Archived" && onRestoreEmployee && (
+                <Button
+                  size="sm"
+                  variant="success"
+                  onClick={() => onRestoreEmployee(emp)}
+                >
+                  Restore
+                </Button>
+              )}
+            </div>
           </div>
         ))}
       </div>

@@ -4,7 +4,6 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import { useSession } from "next-auth/react";
 import {
   MOCK_ADMIN_USER,
-  MOCK_EMPLOYEES,
   MOCK_ADMIN_ACTIVITIES,
 } from "@/data/mockData";
 
@@ -36,7 +35,7 @@ export function HrmsProvider({ children }) {
   });
 
   const [adminProfile] = useState(MOCK_ADMIN_USER);
-  const [employees, setEmployees] = useState(MOCK_EMPLOYEES);
+  const [employees, setEmployees] = useState([]);
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [activities, setActivities] = useState(MOCK_ADMIN_ACTIVITIES);
   const [isLoadingData, setIsLoadingData] = useState(false);
